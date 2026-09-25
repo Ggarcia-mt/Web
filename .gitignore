@@ -1,9 +1,36 @@
+# Dependencias y compilados
 node_modules/
 client/dist/
-server/.env
+.vite/
+**/.vite/
+
+# Secretos: variables de entorno (solo se sube la plantilla .env.example)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+
+# Base de datos local y respaldos
 server/.pgdata/
+*.sql.gz
+*.dump
+*.sqlite
+*.db
+
+# Datos reales exportados/importados (pueden contener información personal)
+*.xlsx
+*.xls
+*.csv
+
+# Registros y archivos del sistema/IDE
 *.log
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
 nbproject/
