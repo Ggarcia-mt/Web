@@ -1,0 +1,237 @@
+// CampusPoli - Modelo de datos (PostgreSQL)
+// Documentación: https://www.prisma.io/docs/orm/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Usuarios y roles (RF-01)
+// El "usuario sin autenticar" (anónimo) no se guarda como User: sus intentos
+// en evaluaciones públicas quedan en Submission.guestName / guestEmail.
+// ---------------------------------------------------------------------------
+enum Role {
+  ADMIN
+  PROFESOR
+  ESTUDIANTE // Estudiante de curso: inscrito por un profesor o con código de curso
+  INDEPENDIENTE // Estudiante independiente: se registra solo, resuelve evaluaciones públicas
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  name               String
+  email              String   @unique
+  passwordHash       String
+  role               Role     @default(INDEPENDIENTE)
+  document           String?
+  active             Boolean  @default(true)
+  mustChangePassword Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  coursesTaught     Course[]
+  enrollments       Enrollment[]
+  submissions       Submission[]
+  attendance        AttendanceRecord[]
+  assignedEvals     EvaluationAssignee[]
+  createdEvaluations Evaluation[]      @relation("EvaluationAuthor")
+}
+
+// ---------------------------------------------------------------------------
+// Cursos e inscripciones
+// ---------------------------------------------------------------------------
+model Course {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  period      String? // Ej: 2026-2
+  joinCode    String   @unique // Código para que el estudiante se una
+  active      Boolean  @default(true)
+  teacherId   Int
+  teacher     User     @relation(fields: [teacherId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  enrollments Enrollment[]
+  evaluations Evaluation[]
+  sessions    AttendanceSession[]
+}
+
+model Enrollment {
+  id        Int      @id @default(autoincrement())
+  courseId  Int
+  userId    Int
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([courseId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Evaluaciones y banco de preguntas (RF-02, RF-03)
+// ---------------------------------------------------------------------------
+enum EvaluationType {
+  EXAMEN
+  EJERCICIO
+}
+
+enum EvaluationStatus {
+  BORRADOR
+  PUBLICADA
+  CERRADA
+}
+
+enum Audience {
+  CURSO // Todo el grupo
+  ESPECIFICOS // Estudiantes seleccionados
+  PUBLICA // Cualquiera con el enlace (incluye anónimos)
+}
+
+enum QuestionType {
+  MULTIPLE // Selección múltiple con única respuesta
+  COMPLETAR // Completar el espacio en blanco
+}
+
+model Evaluation {
+  id           Int              @id @default(autoincrement())
+  courseId     Int
+  course       Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  authorId     Int
+  author       User             @relation("EvaluationAuthor", fields: [authorId], references: [id])
+  title        String
+  description  String?
+  type         EvaluationType   @default(EXAMEN)
+  status       EvaluationStatus @default(BORRADOR)
+  audience     Audience         @default(CURSO)
+  weight       Float            @default(0) // Porcentaje sobre la nota del curso
+  timeLimitMin Int? // Minutos; null = sin límite
+  maxAttempts  Int              @default(1)
+  opensAt      DateTime?
+  closesAt     DateTime?
+  publicCode   String?          @unique
+  showResults  Boolean          @default(true)
+  shuffle      Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  questions   Question[]
+  assignees   EvaluationAssignee[]
+  submissions Submission[]
+}
+
+model EvaluationAssignee {
+  evaluationId Int
+  userId       Int
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([evaluationId, userId])
+}
+
+model Question {
+  id            Int          @id @default(autoincrement())
+  evaluationId  Int
+  evaluation    Evaluation   @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  type          QuestionType
+  prompt        String // En COMPLETAR el espacio se marca con ___
+  options       Json? // string[] (solo MULTIPLE)
+  correctOption Int? // índice de la opción correcta (solo MULTIPLE)
+  answers       Json? // string[] respuestas aceptadas (solo COMPLETAR)
+  points        Float        @default(1)
+  explanation   String?
+  order         Int          @default(0)
+  aiGenerated   Boolean      @default(false)
+
+  responses Answer[]
+}
+
+// ---------------------------------------------------------------------------
+// Intentos, respuestas y calificación (RF-05)
+// ---------------------------------------------------------------------------
+model Submission {
+  id           Int        @id @default(autoincrement())
+  evaluationId Int
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  userId       Int?
+  user         User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guestName    String?
+  guestEmail   String?
+  guestToken   String?    @unique // Permite al anónimo continuar/ver su intento
+  attempt      Int        @default(1)
+  startedAt    DateTime   @default(now())
+  submittedAt  DateTime?
+  score        Float      @default(0) // Puntos obtenidos (con ajustes por pregunta)
+  maxScore     Float      @default(0)
+  bonus        Float      @default(0) // Puntos adicionales sobre la nota (escala 0-5)
+  grade        Float? // Nota final en escala GRADE_SCALE
+  feedback     String?
+
+  answers Answer[]
+
+  @@index([evaluationId, userId])
+}
+
+model Answer {
+  id             Int        @id @default(autoincrement())
+  submissionId   Int
+  submission     Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  questionId     Int
+  question       Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  value          String?
+  isCorrect      Boolean    @default(false)
+  points         Float      @default(0) // Puntos automáticos
+  overridePoints Float? // Ajuste manual del profesor
+
+  @@unique([submissionId, questionId])
+}
+
+// ---------------------------------------------------------------------------
+// Asistencia dual: QR dinámico o ventana de horario (RF-04)
+// ---------------------------------------------------------------------------
+enum AttendanceMode {
+  QR
+  VENTANA
+}
+
+enum AttendanceStatus {
+  PRESENTE
+  TARDE
+  AUSENTE
+  JUSTIFICADO
+}
+
+model AttendanceSession {
+  id            Int            @id @default(autoincrement())
+  courseId      Int
+  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title         String
+  mode          AttendanceMode
+  secret        String // Semilla para el QR rotativo (HMAC)
+  rotateSeconds Int            @default(30)
+  startsAt      DateTime
+  endsAt        DateTime
+  lateAfterMin  Int? // Minutos después de startsAt en que se marca TARDE
+  createdAt     DateTime       @default(now())
+
+  records AttendanceRecord[]
+}
+
+model AttendanceRecord {
+  id        Int               @id @default(autoincrement())
+  sessionId Int
+  session   AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    AttendanceStatus  @default(PRESENTE)
+  method    String            @default("MANUAL") // QR | VENTANA | MANUAL
+  note      String?
+  markedAt  DateTime          @default(now())
+
+  @@unique([sessionId, userId])
+}

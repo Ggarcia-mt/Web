@@ -1,0 +1,43 @@
+# Blueprint de Render (https://render.com/docs/blueprint-spec)
+# Render > New > Blueprint > selecciona este repositorio.
+services:
+  - type: web
+    name: campuspoli
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: campuspoli-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_IDLE_MINUTES
+        value: 30
+      # URL pública del servicio, p. ej. https://campuspoli.onrender.com (se usa en los QR)
+      - key: APP_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Proveedores de IA: configura los que vayas a usar
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+
+databases:
+  - name: campuspoli-db
+    plan: free
+    databaseName: campuspoli
+    user: campuspoli
